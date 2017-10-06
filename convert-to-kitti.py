@@ -6,11 +6,11 @@ import numpy
 from shutil import copyfile
 import shutil
 
-
+## Remove underscores: find football2-resized3 -type f -name "*_*" -exec sh -c 'd=$(dirname "$1"); mv "$1" "$d/$(basename "$1" | tr -d _)"' sh {} \;
 
 new_width, new_height = 1248, 384
-sourceDirectory='/Users/kris/Downloads/football1-resized'
-destinationDirectory='/Users/kris/Downloads/football1-resized2'
+sourceDirectory='/Users/kris/Downloads/football2-resized2/resized'
+destinationDirectory='/Users/kris/Downloads/football2-resized3'
 
 # remove the dir First
 if os.path.exists(destinationDirectory):
@@ -66,7 +66,7 @@ def convertToKitti(labelsDir, imagesDir, files):
             for item in lines:
                 text_file.write("%s\n" % item)
         # copy the image file
-        imgFile = pre + '.jpg'
+        imgFile = pre + '.png'
         srcFile = os.path.join(sourceDirectory, imgFile)
         dstFile = os.path.join(destinationDirectory + imagesDir, imgFile)
         copyfile(srcFile, dstFile)

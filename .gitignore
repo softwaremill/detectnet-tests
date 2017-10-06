@@ -1,1 +1,8 @@
 env/
+models/adidas.caffemodel
+models/enterprise.caffemodel
+models/fedex.caffemodel
+models/hankook.caffemodel
+models/unicredit.caffemodel
+models/amstel.caffemodel
+

@@ -13,35 +13,49 @@ import numpy
 from google.protobuf import text_format
 from moviepy.editor import VideoFileClip
 import image_slicer
+from collections import Counter
 
 import scipy.misc
 os.environ['GLOG_minloglevel'] = '2' # Suppress most caffe output
 
 import caffe
 from caffe.proto import caffe_pb2
+import random
 
 countedLogos = []
 frameNumber = 0
-foundLogos = False
 
-DEPLOY_FILE = '/Users/kris/Downloads/fedex_mil_model_epoch_70.0/deploy.prototxt'
+def incrementFrameNumber():
+    global frameNumber
+    frameNumber += 1
+
+def addLogoEntry(logo):
+    global countedLogos
+    countedLogos.append(logo)
+
+DEPLOY_FILE = 'deploy.prototxt'
 MEAN_FILE = None #'/Users/kris/Downloads/fedex_mil_model_epoch_70.0/mean.binaryproto'
-MODEL_FILE = '/Users/kris/Downloads/fedex_mil_model_epoch_70.0/snapshot_iter_28000.caffemodel'
+#'/Users/kris/Downloads/fedex_mil_model_epoch_70.0/snapshot_iter_28000.caffemodel'
+MODELS = ['fedex', 'enterprise', 'adidas', 'hankook', 'unicredit']
 BATCH_SIZE = 1
 OUTPUT_FILE = 'output.mp4'
 INPUT_FILE = '/Users/kris/Downloads/footbal-split-movie-57s.mp4'
 USE_GPU = False
+FPS = 60.0
 
 # IMAGE_FILE = '/Users/kris/Downloads/football2-resized2/resized/195583_01_01.png'
 
 class Logo:
     """Represents a single logo set."""
     frameNumber = 0
-    fedexCounter = 0
-    def __init__(self, frameNumber, fedexCounter):
-        self.frameNumber = frameNumber
-        self.fedexCounter = fedexCounter
+    foundBoxes = 0
 
+    def __init__(self, frameNumber, foundBoxes):
+        self.frameNumber = frameNumber
+        self.foundBoxes = foundBoxes
+
+    def __repr__(self):
+     return "Logo(" + str(self.frameNumber) + ": " + str(self.foundBoxes) + " )"
 
 
 def get_net(caffemodel, deploy_file, use_gpu=False):
@@ -122,11 +136,9 @@ def resize_img(image, height, width):
     """
     image = np.array(image)
     image = scipy.misc.imresize(image, (height, width), 'bilinear')
-
-    #image = image.resize((width, height), Image.ANTIALIAS)
     return image
 
-def draw_bboxes(image, locations):
+def draw_bboxes(image, locations, clr):
     """
     Draws the bounding boxes into an image
 
@@ -134,14 +146,13 @@ def draw_bboxes(image, locations):
     image -- a single image already resized
     locations -- the location of the bounding boxes
     """
+    boxesFound = 0
     for left,top,right,bottom,confidence in locations:
         if confidence==0:
             continue
-        print("confidence > 0")
-        foundLogos = True
-        cv2.rectangle(image,(left,top),(right,bottom),(255,0,0),3)
-    #cv2.imwrite('bbox.png',image)#test on a single image
-    return image
+        boxesFound += 1
+        cv2.rectangle(image,(left,top),(right,bottom),clr,3)
+    return (boxesFound, image)
 
 def forward_pass(image, net, transformer, batch_size=None):
     """
@@ -187,7 +198,7 @@ def forward_pass(image, net, transformer, batch_size=None):
 
     return scores
 
-def classify(caffemodel, deploy_file, image,
+def classify(caffemodel, deploy_file, image, clr,
         mean_file=None, batch_size=None, use_gpu=False):
     """
     Classify some images against a Caffe model and print the results
@@ -223,11 +234,20 @@ def classify(caffemodel, deploy_file, image,
     # Format of scores is [ batch_size x max_bbox_per_image x 5 (xl, yt, xr, yb, confidence) ]
     # https://github.com/NVIDIA/caffe/blob/v0.15.13/python/caffe/layers/detectnet/clustering.py#L81
     for i, image_results in enumerate(scores):
-        print '==> Image #%d' % i
-        img_result = draw_bboxes(image,image_results)
+        boxesFound, img_result = draw_bboxes(image,image_results, clr)
     # This line is optinal, in this case we resize to the size of the original input video, can be removed
     #img_result = resize_img(img_result,720,1280)
-    return img_result
+    return (boxesFound, img_result)
+
+def getColorForClass(modelName):
+    return {
+        'fedex': (255,0,0),
+        'enterprise': (0,0,255),
+        'unicredit': (0,255,0),
+        'amstel': (150,150,0),
+        'adidas': (0,150,150),
+        'hankook': (0,255,255)
+    }[modelName]
 
 def detect_logos(image):
     """
@@ -236,8 +256,14 @@ def detect_logos(image):
     Arguments:
     image -- cv2 image file being 1/4 of the original
     """
-    result = classify(MODEL_FILE, DEPLOY_FILE, image, MEAN_FILE, BATCH_SIZE, USE_GPU)
-    return result
+    result = image
+    boxes = {}
+    for model in MODELS:
+        print("Detecting bboxes for: " + model)
+        clr = getColorForClass(model)
+        boxesFound, result = classify('./models/'+model+'.caffemodel', DEPLOY_FILE, result, clr, MEAN_FILE, BATCH_SIZE, USE_GPU)
+        boxes[model] = boxesFound
+    return (boxes, result)
 
 def slice_image(image, number_tiles):
     im = toPILImage(image)
@@ -281,6 +307,13 @@ def joinImages(modified_images):
     result.paste(modified_images[3], (640, 360))
     return result
 
+def merge_dicts(allBoxes):
+    inp = [dict(x) for x in allBoxes]
+    count = Counter()
+    for y in inp:
+        count += Counter(y)
+    return dict(count)
+
 def detect_logos_full_img(image):
     """
     Splits a single frame into 4 images
@@ -291,31 +324,123 @@ def detect_logos_full_img(image):
     tiles = slice_image(image, 4)
     modified_images = []
     print("tiles length: " + str(len(tiles)))
+    fullImageBoxes = []
     for i, tile in enumerate(tiles):
         open_cv_image = numpy.array(tile.image)
         image = open_cv_image[:, :, ::-1].copy()
-        img_detected = detect_logos(image)
+        boxes, img_detected = detect_logos(image)
         modified_images.append(toPILImage(img_detected))
+        fullImageBoxes.append(boxes)
     img = joinImages(modified_images)
-
-    # if foundLogos:
-        # countedLogos.append(Logo(frameNumber, 1))
-    # frameNumber += 1
-    # foundLogos = False
+    allBoxes = merge_dicts(fullImageBoxes)
+    print("All boxes: " + str(allBoxes))
+    addLogoEntry(Logo(frameNumber, allBoxes))
+    incrementFrameNumber()
     return toOpenCVFormat(img)
 
+def produceReport(logos, movieTime):
+    fedexFrameCount = 0
+    amstelFrameCount = 0
+    unicreditFrameCount = 0
+    adidasFrameCount = 0
+    hankookFrameCount = 0
+    enterpriseFrameCount = 0
+    allBoxes = []
+
+    for logo in logos:
+        if 'fedex' in logo.foundBoxes and logo.foundBoxes['fedex'] > 0:
+            fedexFrameCount += 1
+        if 'amstel' in logo.foundBoxes and logo.foundBoxes['amstel'] > 0:
+            amstelFrameCount += 1
+        if 'unicredit' in logo.foundBoxes and logo.foundBoxes['unicredit'] > 0:
+            unicreditFrameCount += 1
+        if 'adidas' in logo.foundBoxes and logo.foundBoxes['adidas'] > 0:
+            adidasFrameCount += 1
+        if 'hankook' in logo.foundBoxes and logo.foundBoxes['hankook'] > 0:
+            hankookFrameCount += 1
+        if 'enterprise' in logo.foundBoxes and logo.foundBoxes['enterprise'] > 0:
+            enterpriseFrameCount += 1
+        allBoxes.append(logo.foundBoxes)
+
+    allObjectsDetected = merge_dicts(allBoxes)
+    report = """
+    *****************************************************
+
+            TOTAL TIME: %s s
+            LOGO DETECTOR REPORT:
+
+            FEDEX STATS:
+                frame count: %s
+                total time: %s
+                objects detected: %s
+
+            AMSTEL STATS:
+                frame count: %s
+                total time: %s
+                objects detected: %s
+
+            UNICREDIT STATS:
+                frame count: %s
+                total time: %s
+                objects detected: %s
+
+            ADIDAS STATS:
+                frame count: %s
+                total time: %s
+                objects detected: %s
+
+            HANKOOK STATS:
+                frame count: %s
+                total time: %s
+                objects detected: %s
+
+            ENTERPRISE STATS:
+                frame count: %s
+                total time: %s
+                objects detected: %s
+
+            more information at: www.softwaremill.com
+
+    *****************************************************
+
+            """ % (str(movieTime),
+                  str(fedexFrameCount),
+                  "{:.4f}".format(fedexFrameCount / FPS) + " s",
+                  str(allObjectsDetected.get('fedex', 0)),
+                  str(amstelFrameCount),
+                  "{:.4f}".format(amstelFrameCount / FPS) + " s",
+                  str(allObjectsDetected.get('amstel', 0)),
+                  str(unicreditFrameCount),
+                  "{:.4f}".format(unicreditFrameCount / FPS) + " s",
+                  str(allObjectsDetected.get('unicredit', 0)),
+                  str(adidasFrameCount),
+                  "{:.4f}".format(adidasFrameCount / FPS) + " s",
+                  str(allObjectsDetected.get('adidas', 0)),
+                  str(hankookFrameCount),
+                  "{:.4f}".format(hankookFrameCount / FPS) + " s",
+                  str(allObjectsDetected.get('hankook', 0)),
+                  str(enterpriseFrameCount),
+                  "{:.4f}".format(enterpriseFrameCount / FPS) + " s",
+                  str(allObjectsDetected.get('enterprise', 0)))
+    print report
+
+
 if __name__ == '__main__':
+    frameNumber = 0
     script_start_time = time.time()
 
     project_output = OUTPUT_FILE
 
     clip1 = VideoFileClip(INPUT_FILE);
-    white_clip = clip1.fl_image(detect_logos_full_img)
-    white_clip.write_videofile(project_output, audio=True);
+    #white_clip = clip1.fl_image(detect_logos_full_img)
+    #white_clip.write_videofile(project_output, audio=True);
 
-    # IMAGE_FILE = '/Users/kris/Downloads/football2-resized2/resized/184196_01_01.png'
-    # image = cv2.imread(IMAGE_FILE);
-    # img = detect_logos_full_img(image)
-    # cv2.imwrite('frame.jpg',img)
+    #IMAGE_FILE = '/Users/kris/Downloads/football2-resized2/resized/184196_01_01.png'
+    IMAGE_FILE = '/Users/kris/Downloads/football/frame21238.jpg'
+    image = cv2.imread(IMAGE_FILE);
+    img = detect_logos_full_img(image)
+    cv2.imwrite('frame2.jpg',img)
     print 'Video took %f seconds.' % (time.time() - script_start_time)
     print 'Counted logos: ' + str(countedLogos)
+    print 'Processed frames: ' + str(frameNumber)
+    produceReport(countedLogos, clip1.duration)
