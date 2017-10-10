@@ -8,7 +8,6 @@ import shutil
 
 ## Remove underscores: find football2-resized3 -type f -name "*_*" -exec sh -c 'd=$(dirname "$1"); mv "$1" "$d/$(basename "$1" | tr -d _)"' sh {} \;
 
-new_width, new_height = 1248, 384
 sourceDirectory='/Users/kris/Downloads/football2-resized2/resized'
 destinationDirectory='/Users/kris/Downloads/football2-resized3'
 

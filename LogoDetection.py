@@ -431,15 +431,15 @@ if __name__ == '__main__':
 
     project_output = OUTPUT_FILE
 
-    clip1 = VideoFileClip(INPUT_FILE);
-    #white_clip = clip1.fl_image(detect_logos_full_img)
-    #white_clip.write_videofile(project_output, audio=True);
+    clip1 = VideoFileClip(INPUT_FILE)
+    white_clip = clip1.fl_image(detect_logos_full_img)
+    white_clip.write_videofile(project_output, audio=False)
 
     #IMAGE_FILE = '/Users/kris/Downloads/football2-resized2/resized/184196_01_01.png'
-    IMAGE_FILE = '/Users/kris/Downloads/football/frame21238.jpg'
-    image = cv2.imread(IMAGE_FILE);
-    img = detect_logos_full_img(image)
-    cv2.imwrite('frame2.jpg',img)
+    #IMAGE_FILE = '/Users/kris/Downloads/football/frame21238.jpg'
+    #image = cv2.imread(IMAGE_FILE);
+    #img = detect_logos_full_img(image)
+    #cv2.imwrite('frame2.jpg',img)
     print 'Video took %f seconds.' % (time.time() - script_start_time)
     print 'Counted logos: ' + str(countedLogos)
     print 'Processed frames: ' + str(frameNumber)
